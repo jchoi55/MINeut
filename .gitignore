@@ -1,5 +1,6 @@
 # Ignore virtual environment folder
 venv/
+localtest*
 
 # Ignore Python bytecode files
 __pycache__/
