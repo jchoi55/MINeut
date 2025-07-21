@@ -156,6 +156,62 @@ def create_racetrack_lattice(
 
     return lattice
 
+def create_straight_lattice(
+    total_length=100e2, n_elements=10_000, **kwargs
+):
+
+    n_points = 300
+
+    #Straight
+    x_track= np.linspace(-total_length / 2, total_length / 2, int(n_points / 4))
+    y_track = np.full_like(x_track, 0)
+
+    lattice_dict = create_lattice_dict_from_vertices(
+        (x_track, y_track), n_elements=n_elements
+    )
+    # Any additional user-input
+    lattice_dict.update(kwargs)
+
+    lattice = Lattice(**lattice_dict)
+    lattice.vertices = (x_track, y_track)
+
+    return lattice
+
+def create_dogbone_lattice(
+    straight_length=100e2, total_length=300e2, m = 2, n_elements=10_000, **kwargs
+):
+    #for now this is found using mathematica
+    scale = 1946.5338408838027
+
+    n_points = 300
+    theta= np.linspace(0, 2 * np.pi, int(n_points / 4))
+    # Teardrop on the left
+    x_left = -straight_length / 2 + scale*(np.cos(theta)-1)
+    y_left = scale*np.sin(theta)*(np.sin(theta*0.5))**m
+
+    # Teardrop on the right
+    x_right = straight_length / 2 - scale*(np.cos(theta)-1)
+    y_right = scale*np.sin(theta)*(np.sin(theta*0.5))**m
+
+    # Straight
+    x_track = np.linspace(straight_length / 2, -straight_length / 2, int(n_points / 4))
+    y_track = np.full_like(x_track, 0)
+
+    # Concatenate all segments
+    x_racetrack = np.concatenate([x_left, x_track, x_right])
+    y_racetrack = np.concatenate([y_left, y_track, y_right])
+    #y_racetrack -= np.max(y_racetrack)
+
+    lattice_dict = create_lattice_dict_from_vertices(
+        (x_racetrack, y_racetrack), n_elements=n_elements
+    )
+    # Any additional user-input
+    lattice_dict.update(kwargs)
+
+    lattice = Lattice(**lattice_dict)
+    lattice.vertices = (x_racetrack, y_racetrack)
+
+    return lattice
 
 def create_elliptical_lattice(
     length_minor, length_major, center=(0, 0), n_elements=10_000, **kwargs
