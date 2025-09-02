@@ -503,6 +503,228 @@ def create_RLA_lattice(
 
     return lattice
 
+<<<<<<< HEAD
+=======
+def create_lattice_from_json(json_path, n_elements=10000, scale_to_length=None, **kwargs):
+    import json
+    import numpy as np
+
+    with open(json_path) as f:
+        data = json.load(f)
+
+    dataset = data["datasetColl"][0]  # assuming you want the first dataset
+    points = dataset["data"]
+    x = np.array([pt["x"] for pt in points])
+    y = np.array([pt["y"] for pt in points])
+
+    # Optional scaling
+    if scale_to_length:
+        current_length = np.max(x) - np.min(x)
+        scale = scale_to_length / current_length
+        x *= scale
+        y *= scale
+
+    lattice_dict = create_lattice_dict_from_vertices((x, y), n_elements=n_elements)
+    lattice_dict.update(kwargs)
+
+    lattice = Lattice(**lattice_dict)
+    lattice.vertices = (x, y)
+    return lattice
+
+def create_RLA_lattice(
+    straight_length=100e2, total_length=300e2, m = 2, n_elements=10_000, **kwargs
+):
+    #for now this is found using mathematica
+    scale = 1946.5338408838027
+
+    n_points = 300
+    theta= np.linspace(0, 2 * np.pi, int(n_points / 4))
+    # Teardrop on the left
+    x_left = -straight_length / 2 + scale*(np.cos(theta)-1)
+    y_left = scale*np.sin(theta)*(np.sin(theta*0.5))**m
+
+    # Teardrop on the right
+    x_right = straight_length / 2 - scale*(np.cos(theta)-1)
+    y_right = scale*np.sin(theta)*(np.sin(theta*0.5))**m
+
+    # Straight
+    x_track = np.linspace(-straight_length / 2, straight_length / 2, int(n_points / 4))
+    y_track = np.full_like(x_track, 0)
+    x_back = np.linspace(straight_length / 2, -straight_length / 2, int(n_points / 4))
+
+    # Concatenate all segments
+    x_racetrack = np.concatenate([x_track, x_right, x_back, x_left,x_track, x_right, x_back, x_left])
+    y_racetrack = np.concatenate([y_track, y_right,y_track,y_left,y_track, y_right,y_track,y_left])
+    #y_racetrack -= np.max(y_racetrack)
+
+    lattice_dict = create_lattice_dict_from_vertices(
+        (x_racetrack, y_racetrack), n_elements=n_elements
+    )
+    # Any additional user-input
+    lattice_dict.update(kwargs)
+
+    lattice = Lattice(**lattice_dict)
+    lattice.vertices = (x_racetrack, y_racetrack)
+
+    return lattice
+
+def create_RLA_lattice2(
+    straight_length=70, n_elements=10_000, start = 0, **kwargs
+):
+
+    n_points = 300
+
+    #first pass
+    
+    markers_1 = np.array([(0.161586*straight_length)+(straight_length/2)])
+    markers_1 = np.append(markers_1,markers_1[0]+(0.109756*straight_length))
+    markers_1 = np.append(markers_1,markers_1[1]+(0.246951*straight_length))
+
+    x_1= np.linspace(start, straight_length / 2, int(n_points / 4))
+    y_1 = np.full_like(x_1, 0)
+
+    x_1_1 = np.linspace(straight_length / 2, markers_1[0], int(n_points / 4))
+    y_1_1 = 0.18529*x_1_1-(0.0926448*straight_length)
+
+    x_1_2 = np.linspace(markers_1[0], markers_1[1], int(n_points / 4))
+    y_1_2 = 0.436461*x_1_2-(0.258817*straight_length)
+
+    x_1_3 = np.linspace(markers_1[1],markers_1[2], int(n_points / 4))
+    y_1_3 = 0.654692*x_1_3-(0.427147*straight_length)
+
+    theta_1= np.linspace(1.04327,(2*np.pi)-1.04327, int(n_points / 4))
+    radius_1 = 0.284043*straight_length
+    center_1 = 0.645828*straight_length+(straight_length/2)
+
+    x_curve_1 = -radius_1*np.cos(theta_1)+center_1
+    y_curve_1 = radius_1*np.sin(theta_1)
+
+    x_1_4 = x_1_3[::-1]
+    y_1_4 = -y_1_3[::-1]
+
+    x_1_5 = x_1_2[::-1]
+    y_1_5 = -y_1_2[::-1]
+
+    x_1_6 = x_1_1[::-1]
+    y_1_6 = -y_1_1[::-1]
+
+    #second pass
+
+    markers_2 = np.array([(-0.170732*straight_length)-(straight_length/2)])
+    markers_2 = np.append(markers_2,markers_2[0]-(0.128049*straight_length))
+    markers_2 = np.append(markers_2,markers_2[1]-(0.286585*straight_length))
+
+    x_2 = np.linspace(straight_length / 2, -straight_length / 2, int(n_points / 4))
+    y_2 = np.full_like(x_2, 0)
+
+    x_2_1 = np.linspace(-straight_length / 2, markers_2[0], int(n_points / 4))
+    y_2_1 = -0.210437*x_2_1-(0.105218*straight_length)
+
+    x_2_2 = np.linspace(markers_2[0], markers_2[1], int(n_points / 4))
+    y_2_2 = -0.444256*x_2_2-(0.262048*straight_length)
+
+    x_2_3 = np.linspace(markers_2[1],markers_2[2], int(n_points / 4))
+    y_2_3 = -0.658172*x_2_3-(0.43292*straight_length)
+
+    theta_2= np.linspace(1.0748,(2*np.pi)-1.0748, int(n_points / 4))
+    radius_2 = 0.329418*straight_length
+    center_2 = -0.737655*straight_length-(straight_length/2)
+
+    x_curve_2 = radius_2*np.cos(theta_2)+center_2
+    y_curve_2 = radius_2*np.sin(theta_2)
+
+    x_2_4 = x_2_3[::-1]
+    y_2_4 = -y_2_3[::-1]
+
+    x_2_5 = x_2_2[::-1]
+    y_2_5 = -y_2_2[::-1]
+
+    x_2_6 = x_2_1[::-1]
+    y_2_6 = -y_2_1[::-1]
+
+    #third pass
+
+    markers_3 = np.array([(0.216463*straight_length)+(straight_length/2)])
+    markers_3 = np.append(markers_3,markers_3[0]+(0.155488*straight_length))
+    markers_3 = np.append(markers_3,markers_3[1]+(0.344512*straight_length))
+
+    x_3= np.linspace(-straight_length / 2, straight_length / 2, int(n_points / 4))
+    y_3 = np.full_like(x_3, 0)
+
+    x_3_1 = np.linspace(straight_length / 2, markers_3[0], int(n_points / 4))
+    y_3_1 = 0.0968204*x_3_1-(0.0484102*straight_length)
+
+    x_3_2 = np.linspace(markers_3[0], markers_3[1], int(n_points / 4))
+    y_3_2 = 0.365857*x_3_2-(0.241165*straight_length)
+
+    x_3_3 = np.linspace(markers_3[1],markers_3[2], int(n_points / 4))
+    y_3_3 = 0.651794*x_3_3-(0.490488*straight_length)
+
+    theta_3= np.linspace(1.06755,(2*np.pi)-1.06755, int(n_points / 4))
+    radius_3 = 0.354524*straight_length
+    center_3 = 0.871086*straight_length+(straight_length/2)
+
+    x_curve_3 = -radius_3*np.cos(theta_3)+center_3
+    y_curve_3 = radius_3*np.sin(theta_3)
+
+    x_3_4 = x_3_3[::-1]
+    y_3_4 = -y_3_3[::-1]
+
+    x_3_5 = x_3_2[::-1]
+    y_3_5 = -y_3_2[::-1]
+
+    x_3_6 = x_3_1[::-1]
+    y_3_6 = -y_3_1[::-1]
+
+    #fourth pass
+
+    markers_4 = np.array([(-0.246951*straight_length)-(straight_length/2)])
+    markers_4 = np.append(markers_4,markers_4[0]-(0.17378*straight_length))
+    markers_4 = np.append(markers_4,markers_4[1]-(0.390244*straight_length))
+
+    x_4 = np.linspace(straight_length / 2, -straight_length / 2, int(n_points / 4))
+    y_4 = np.full_like(x_4, 0)
+
+    x_4_1 = np.linspace(-straight_length / 2, markers_4[0], int(n_points / 4))
+    y_4_1 = -0.0848675*x_4_1-(0.0424337*straight_length)
+
+    x_4_2 = np.linspace(markers_4[0], markers_4[1], int(n_points / 4))
+    y_4_2 = -0.361803*x_4_2-(0.249291*straight_length)
+
+    x_4_3 = np.linspace(markers_4[1],markers_4[2], int(n_points / 4))
+    y_4_3 = -0.659804*x_4_3-(0.52367*straight_length)
+
+    theta_4= np.linspace(1.06593,(2*np.pi)-1.06593, int(n_points / 4))
+    radius_4 = 0.392126*straight_length
+    center_4 = -0.977735*straight_length-(straight_length/2)
+
+    x_curve_4 = radius_4*np.cos(theta_4)+center_4
+    y_curve_4 = radius_4*np.sin(theta_4)
+
+    x_4_4 = x_4_3[::-1]
+    y_4_4 = -y_4_3[::-1]
+
+    x_4_5 = x_4_2[::-1]
+    y_4_5 = -y_4_2[::-1]
+
+    x_4_6 = x_4_1[::-1]
+    y_4_6 = -y_4_1[::-1]
+
+    # Concatenate all segments
+    x_racetrack = np.concatenate([x_1,x_1_1,x_1_2,x_1_3,x_curve_1,x_1_4,x_1_5,x_1_6,x_2,x_2_1,x_2_2,x_2_3,x_curve_2,x_2_4,x_2_5,x_2_6,x_3,x_3_1,x_3_2,x_3_3,x_curve_3,x_3_4,x_3_5,x_3_6,x_4,x_4_1,x_4_2,x_4_3,x_curve_4,x_4_4,x_4_5,x_4_6])
+    y_racetrack = np.concatenate([y_1,y_1_1,y_1_2,y_1_3,y_curve_1,y_1_4,y_1_5,y_1_6,y_2,y_2_1,y_2_2,y_2_3,y_curve_2,y_2_4,y_2_5,y_2_6,y_3,y_3_1,y_3_2,y_3_3,y_curve_3,y_3_4,y_3_5,y_3_6,y_4,y_4_1,y_4_2,y_4_3,y_curve_4,y_4_4,y_4_5,y_4_6])
+
+    lattice_dict = create_lattice_dict_from_vertices(
+        (x_racetrack, y_racetrack), n_elements=n_elements
+    )
+    # Any additional user-input
+    lattice_dict.update(kwargs)
+
+    lattice = Lattice(**lattice_dict)
+    lattice.vertices = (x_racetrack, y_racetrack)
+
+    return lattice
+>>>>>>> c5cd75f941e4edb751b861f1e67227c114516c3b
 
 def create_elliptical_lattice(
     length_minor, length_major, center=(0, 0), n_elements=10_000, **kwargs
