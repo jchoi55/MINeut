@@ -388,18 +388,21 @@ class MuDecaySimulator:
         per_area=True,
         new_polarization=None,
         normalization=1,
+        mask=None,
     ):
 
+        if mask is None:
+            mask = np.ones(self.sample_size, dtype=bool)
         det_location = np.asarray(det_location)
         if det_location.shape != (3,):
             raise ValueError("det_location must be a list or array of length 3.")
         det_vector = vector.array(
             {"x": det_location[0], "y": det_location[1], "z": det_location[2]}
         )
-        print(det_vector)
         # normal_to_detector_plane = det_vector.unit()
-        distances = det_vector - self.pos
-        neutrino_direction = self.pnu.to_3D().unit()
+        distances = det_vector - self.pos[mask]
+        neutrino_direction = self.pnu[mask].to_3D().unit()
+        dotprod = distances.dot(neutrino_direction)
 
         # Project distance vector onto neutrino direction
         sintheta = np.sqrt(1 - distances.unit().dot(neutrino_direction) ** 2)
@@ -408,7 +411,7 @@ class MuDecaySimulator:
         radial_distance = sintheta * distances.mag
 
         # Check if neutrino crosses the detector disk
-        in_acceptance = (sintheta > 0) & (radial_distance < det_radius)
+        in_acceptance = (dotprod > 0) & (radial_distance < det_radius)
 
         # Detector area
         area = np.pi * det_radius**2
@@ -416,9 +419,9 @@ class MuDecaySimulator:
         # Select appropriate weights
         if new_polarization is not None:
             self.reweight_with_new_polarization(new_polarization)
-            w = self.weights_new_pol
+            w = self.weights_new_pol[mask]
         else:
-            w = self.weights[:, 0]
+            w = self.weights[mask, 0]
 
         # Normalize accepted neutrino weights
         if np.sum(w) == 0:
@@ -432,7 +435,7 @@ class MuDecaySimulator:
 
         if nu_eff_ND > 0:
             Enu_ND, flux_nu_ND_p = get_flux(
-                self.pnu["E"][in_acceptance], w[in_acceptance], ebins
+                self.pnu["E"][mask][in_acceptance], w[in_acceptance], ebins
             )
 
             # Convert to flux per unit area per unit energy

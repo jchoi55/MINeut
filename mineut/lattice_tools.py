@@ -123,21 +123,23 @@ def create_racetrack_lattice(
     )  # radius of the semicircles
     n_points = 300
     # Semicircle on the left
-    theta_left = np.linspace(3 * np.pi / 2, np.pi / 2, int(n_points / 4))
+    theta_left = np.linspace(3 * np.pi / 2, np.pi / 2, n_points_per_element)
     x_left = -straight_length / 2 + racetrack_radius * np.cos(theta_left)
     y_left = racetrack_radius * np.sin(theta_left)
 
     # Semicircle on the right
-    theta_right = np.linspace(np.pi / 2, 3 * np.pi / 2, int(n_points / 4))
+    theta_right = np.linspace(np.pi / 2, 3 * np.pi / 2, n_points_per_element)
     x_right = straight_length / 2 - racetrack_radius * np.cos(theta_right)
     y_right = racetrack_radius * np.sin(theta_right)
 
     # Top straight
-    x_top = np.linspace(-straight_length / 2, straight_length / 2, int(n_points / 4))
+    x_top = np.linspace(-straight_length / 2, straight_length / 2, n_points_per_element)
     y_top = np.full_like(x_top, racetrack_radius)
 
     # Bottom straight
-    x_bottom = np.linspace(straight_length / 2, -straight_length / 2, int(n_points / 4))
+    x_bottom = np.linspace(
+        straight_length / 2, -straight_length / 2, n_points_per_element
+    )
     y_bottom = np.full_like(x_bottom, -racetrack_radius)
 
     # Concatenate all segments
@@ -156,20 +158,25 @@ def create_racetrack_lattice(
 
     return lattice
 
+
 def create_straight_lattice(
-    total_length=100e2, n_elements=10_000, **kwargs
+    total_length=100e2, n_elements=10_000, p0_injected=0.255, p0_ejected=1.25, **kwargs
 ):
 
     n_points = 300
 
-    #Straight
-    x_track= np.linspace(-total_length / 2, total_length / 2, int(n_points / 4))
+    # Straight
+    u_vals = np.linspace(0, 1, n_points)
+    x_track = u_vals * total_length - total_length / 2
     y_track = np.full_like(x_track, 0)
 
     lattice_dict = create_lattice_dict_from_vertices(
         (x_track, y_track), n_elements=n_elements
     )
     # Any additional user-input
+    kwargs["beam_p0"] = interp1d(
+        u_vals, u_vals * (p0_ejected - p0_injected) + p0_injected
+    )
     lattice_dict.update(kwargs)
 
     lattice = Lattice(**lattice_dict)
@@ -177,41 +184,325 @@ def create_straight_lattice(
 
     return lattice
 
-def create_dogbone_lattice(
-    straight_length=100e2, total_length=300e2, m = 2, n_elements=10_000, **kwargs
+
+def get_s_element(x, y):
+    return np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2)
+
+
+def create_RLA_lattice(
+    straight_length=70e2,
+    n_elements=10_000,
+    n_points=300,
+    p0_injection=1.25,
+    dp_dx_LA=0.1,
+    **kwargs,
 ):
-    #for now this is found using mathematica
-    scale = 1946.5338408838027
+    """
+    Design taken from
+        https://indico.fnal.gov/event/8903/contributions/110580/attachments/71967/86347/Acceleration_NF_MC.pdf
 
-    n_points = 300
-    theta= np.linspace(0, 2 * np.pi, int(n_points / 4))
-    # Teardrop on the left
-    x_left = -straight_length / 2 + scale*(np.cos(theta)-1)
-    y_left = scale*np.sin(theta)*(np.sin(theta*0.5))**m
 
-    # Teardrop on the right
-    x_right = straight_length / 2 - scale*(np.cos(theta)-1)
-    y_right = scale*np.sin(theta)*(np.sin(theta*0.5))**m
+        Structure looks like:
 
-    # Straight
-    x_track = np.linspace(straight_length / 2, -straight_length / 2, int(n_points / 4))
-    y_track = np.full_like(x_track, 0)
+            (straight section + drop section + back through straight section + ...)
+        where
+            drop section = (3 drift sections + 1 bending section + 3 drift sections)
+
+        Repeat for each pass with larger and larger drop sections
+
+        Acceleration only happens in the straight section.
+
+    """
+    n_points_per_element = n_points
+
+    s_length = np.array([0])
+    dpdx = np.array([])
+
+    # first pass
+    markers_1 = np.array([(0.161586 * straight_length) + (straight_length / 2)])
+    markers_1 = np.append(markers_1, markers_1[0] + (0.109756 * straight_length))
+    markers_1 = np.append(markers_1, markers_1[1] + (0.246951 * straight_length))
+
+    x_1 = np.linspace(-straight_length / 2, straight_length / 2, n_points_per_element)
+    y_1 = np.full_like(x_1, 0)
+    s_length = np.append(s_length, get_s_element(x_1, y_1))
+    dpdx = np.append(dpdx, np.full(n_points_per_element, dp_dx_LA))
+
+    # droplet drift sections
+    x_1_1 = np.linspace(straight_length / 2, markers_1[0], n_points_per_element)
+    y_1_1 = 0.18529 * x_1_1 - (0.0926448 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_1_1, y_1_1))
+
+    x_1_2 = np.linspace(markers_1[0], markers_1[1], n_points_per_element)
+    y_1_2 = 0.436461 * x_1_2 - (0.258817 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_1_2, y_1_2))
+
+    x_1_3 = np.linspace(markers_1[1], markers_1[2], n_points_per_element)
+    y_1_3 = 0.654692 * x_1_3 - (0.427147 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_1_3, y_1_3))
+
+    # droplet arc
+    theta_1 = np.linspace(1.04327, (2 * np.pi) - 1.04327, n_points_per_element)
+    radius_1 = 0.284043 * straight_length
+    center_1 = 0.645828 * straight_length + (straight_length / 2)
+
+    x_curve_1 = -radius_1 * np.cos(theta_1) + center_1
+    y_curve_1 = radius_1 * np.sin(theta_1)
+    s_length = np.append(s_length, get_s_element(x_curve_1, y_curve_1))
+
+    # droplet return drift sections
+    x_1_4 = x_1_3[::-1]
+    y_1_4 = -y_1_3[::-1]
+    s_length = np.append(s_length, get_s_element(x_1_4, y_1_4))
+
+    x_1_5 = x_1_2[::-1]
+    y_1_5 = -y_1_2[::-1]
+    s_length = np.append(s_length, get_s_element(x_1_5, y_1_5))
+
+    x_1_6 = x_1_1[::-1]
+    y_1_6 = -y_1_1[::-1]
+    s_length = np.append(s_length, get_s_element(x_1_6, y_1_6))
+
+    dpdx = np.append(dpdx, np.full(7 * n_points_per_element, 0.0))
+
+    # second pass
+
+    markers_2 = np.array([(-0.170732 * straight_length) - (straight_length / 2)])
+    markers_2 = np.append(markers_2, markers_2[0] - (0.128049 * straight_length))
+    markers_2 = np.append(markers_2, markers_2[1] - (0.286585 * straight_length))
+
+    x_2 = np.linspace(straight_length / 2, -straight_length / 2, n_points_per_element)
+    y_2 = np.full_like(x_2, 0)
+    s_length = np.append(s_length, get_s_element(x_2, y_2))
+    dpdx = np.append(dpdx, np.full(n_points_per_element, dp_dx_LA))
+
+    x_2_1 = np.linspace(-straight_length / 2, markers_2[0], n_points_per_element)
+    y_2_1 = -0.210437 * x_2_1 - (0.105218 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_2_1, y_2_1))
+
+    x_2_2 = np.linspace(markers_2[0], markers_2[1], n_points_per_element)
+    y_2_2 = -0.444256 * x_2_2 - (0.262048 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_2_2, y_2_2))
+
+    x_2_3 = np.linspace(markers_2[1], markers_2[2], n_points_per_element)
+    y_2_3 = -0.658172 * x_2_3 - (0.43292 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_2_3, y_2_3))
+
+    theta_2 = np.linspace(1.0748, (2 * np.pi) - 1.0748, n_points_per_element)
+    radius_2 = 0.329418 * straight_length
+    center_2 = -0.737655 * straight_length - (straight_length / 2)
+
+    x_curve_2 = radius_2 * np.cos(theta_2) + center_2
+    y_curve_2 = radius_2 * np.sin(theta_2)
+    s_length = np.append(s_length, get_s_element(x_curve_2, y_curve_2))
+
+    x_2_4 = x_2_3[::-1]
+    y_2_4 = -y_2_3[::-1]
+    s_length = np.append(s_length, get_s_element(x_2_4, y_2_4))
+
+    x_2_5 = x_2_2[::-1]
+    y_2_5 = -y_2_2[::-1]
+    s_length = np.append(s_length, get_s_element(x_2_5, y_2_5))
+
+    x_2_6 = x_2_1[::-1]
+    y_2_6 = -y_2_1[::-1]
+    s_length = np.append(s_length, get_s_element(x_2_6, y_2_6))
+
+    dpdx = np.append(dpdx, np.full(7 * n_points_per_element, 0.0))
+
+    # third pass
+
+    markers_3 = np.array([(0.216463 * straight_length) + (straight_length / 2)])
+    markers_3 = np.append(markers_3, markers_3[0] + (0.155488 * straight_length))
+    markers_3 = np.append(markers_3, markers_3[1] + (0.344512 * straight_length))
+
+    x_3 = np.linspace(-straight_length / 2, straight_length / 2, n_points_per_element)
+    y_3 = np.full_like(x_3, 0)
+    s_length = np.append(s_length, get_s_element(x_3, y_3))
+    dpdx = np.append(dpdx, np.full(n_points_per_element, dp_dx_LA))
+
+    x_3_1 = np.linspace(straight_length / 2, markers_3[0], n_points_per_element)
+    y_3_1 = 0.0968204 * x_3_1 - (0.0484102 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_3_1, y_3_1))
+
+    x_3_2 = np.linspace(markers_3[0], markers_3[1], n_points_per_element)
+    y_3_2 = 0.365857 * x_3_2 - (0.241165 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_3_2, y_3_2))
+
+    x_3_3 = np.linspace(markers_3[1], markers_3[2], n_points_per_element)
+    y_3_3 = 0.651794 * x_3_3 - (0.490488 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_3_3, y_3_3))
+
+    theta_3 = np.linspace(1.06755, (2 * np.pi) - 1.06755, n_points_per_element)
+    radius_3 = 0.354524 * straight_length
+    center_3 = 0.871086 * straight_length + (straight_length / 2)
+
+    x_curve_3 = -radius_3 * np.cos(theta_3) + center_3
+    y_curve_3 = radius_3 * np.sin(theta_3)
+    s_length = np.append(s_length, get_s_element(x_curve_3, y_curve_3))
+
+    x_3_4 = x_3_3[::-1]
+    y_3_4 = -y_3_3[::-1]
+    s_length = np.append(s_length, get_s_element(x_3_4, y_3_4))
+
+    x_3_5 = x_3_2[::-1]
+    y_3_5 = -y_3_2[::-1]
+    s_length = np.append(s_length, get_s_element(x_3_5, y_3_5))
+
+    x_3_6 = x_3_1[::-1]
+    y_3_6 = -y_3_1[::-1]
+    s_length = np.append(s_length, get_s_element(x_3_6, y_3_6))
+
+    dpdx = np.append(dpdx, np.full(7 * n_points_per_element, 0.0))
+
+    # fourth pass
+
+    markers_4 = np.array([(-0.246951 * straight_length) - (straight_length / 2)])
+    markers_4 = np.append(markers_4, markers_4[0] - (0.17378 * straight_length))
+    markers_4 = np.append(markers_4, markers_4[1] - (0.390244 * straight_length))
+
+    x_4 = np.linspace(straight_length / 2, -straight_length / 2, n_points_per_element)
+    y_4 = np.full_like(x_4, 0)
+    s_length = np.append(s_length, get_s_element(x_4, y_4))
+    dpdx = np.append(dpdx, np.full(n_points_per_element, dp_dx_LA))
+
+    x_4_1 = np.linspace(-straight_length / 2, markers_4[0], n_points_per_element)
+    y_4_1 = -0.0848675 * x_4_1 - (0.0424337 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_4_1, y_4_1))
+
+    x_4_2 = np.linspace(markers_4[0], markers_4[1], n_points_per_element)
+    y_4_2 = -0.361803 * x_4_2 - (0.249291 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_4_2, y_4_2))
+
+    x_4_3 = np.linspace(markers_4[1], markers_4[2], n_points_per_element)
+    y_4_3 = -0.659804 * x_4_3 - (0.52367 * straight_length)
+    s_length = np.append(s_length, get_s_element(x_4_3, y_4_3))
+
+    theta_4 = np.linspace(1.06593, (2 * np.pi) - 1.06593, n_points_per_element)
+    radius_4 = 0.392126 * straight_length
+    center_4 = -0.977735 * straight_length - (straight_length / 2)
+
+    x_curve_4 = radius_4 * np.cos(theta_4) + center_4
+    y_curve_4 = radius_4 * np.sin(theta_4)
+    s_length = np.append(s_length, get_s_element(x_curve_4, y_curve_4))
+
+    x_4_4 = x_4_3[::-1]
+    y_4_4 = -y_4_3[::-1]
+    s_length = np.append(s_length, get_s_element(x_4_4, y_4_4))
+
+    x_4_5 = x_4_2[::-1]
+    y_4_5 = -y_4_2[::-1]
+    s_length = np.append(s_length, get_s_element(x_4_5, y_4_5))
+
+    x_4_6 = x_4_1[::-1]
+    y_4_6 = -y_4_1[::-1]
+    s_length = np.append(s_length, get_s_element(x_4_6, y_4_6))
+
+    dpdx = np.append(dpdx, np.full(7 * n_points_per_element, 0.0))
+
+    # Fifth and final pass
+    x_5 = np.linspace(straight_length / 2, -straight_length / 2, n_points_per_element)
+    y_5 = np.full_like(x_5, 0)
+    s_length = np.append(s_length, get_s_element(x_5, y_5))
+    dpdx = np.append(dpdx, np.full(n_points_per_element, dp_dx_LA))
 
     # Concatenate all segments
-    x_racetrack = np.concatenate([x_left, x_track, x_right])
-    y_racetrack = np.concatenate([y_left, y_track, y_right])
-    #y_racetrack -= np.max(y_racetrack)
+    x_RLA = np.concatenate(
+        [
+            x_1,
+            x_1_1,
+            x_1_2,
+            x_1_3,
+            x_curve_1,
+            x_1_4,
+            x_1_5,
+            x_1_6,
+            x_2,
+            x_2_1,
+            x_2_2,
+            x_2_3,
+            x_curve_2,
+            x_2_4,
+            x_2_5,
+            x_2_6,
+            x_3,
+            x_3_1,
+            x_3_2,
+            x_3_3,
+            x_curve_3,
+            x_3_4,
+            x_3_5,
+            x_3_6,
+            x_4,
+            x_4_1,
+            x_4_2,
+            x_4_3,
+            x_curve_4,
+            x_4_4,
+            x_4_5,
+            x_4_6,
+            x_5,
+        ]
+    )
+    y_RLA = np.concatenate(
+        [
+            y_1,
+            y_1_1,
+            y_1_2,
+            y_1_3,
+            y_curve_1,
+            y_1_4,
+            y_1_5,
+            y_1_6,
+            y_2,
+            y_2_1,
+            y_2_2,
+            y_2_3,
+            y_curve_2,
+            y_2_4,
+            y_2_5,
+            y_2_6,
+            y_3,
+            y_3_1,
+            y_3_2,
+            y_3_3,
+            y_curve_3,
+            y_3_4,
+            y_3_5,
+            y_3_6,
+            y_4,
+            y_4_1,
+            y_4_2,
+            y_4_3,
+            y_curve_4,
+            y_4_4,
+            y_4_5,
+            y_4_6,
+            y_5,
+        ]
+    )
+    # Remove the last element (dpdx is defined in intervals, not points)
+    dpdx = dpdx[:-1]
+
+    # Normalize the arc-length
+    ds_length = get_s_element(x_RLA, y_RLA)
+    s = np.concatenate([[0], np.cumsum(ds_length)])
+    u = s / s[-1]
+    kwargs["beam_p0"] = interp1d(
+        u, np.append([p0_injection], p0_injection + np.cumsum(dpdx * ds_length))
+    )
 
     lattice_dict = create_lattice_dict_from_vertices(
-        (x_racetrack, y_racetrack), n_elements=n_elements
+        (x_RLA, y_RLA), n_elements=n_elements
     )
     # Any additional user-input
     lattice_dict.update(kwargs)
 
     lattice = Lattice(**lattice_dict)
-    lattice.vertices = (x_racetrack, y_racetrack)
+    lattice.vertices = (x_RLA, y_RLA)
 
     return lattice
+
 
 def create_elliptical_lattice(
     length_minor, length_major, center=(0, 0), n_elements=10_000, **kwargs
