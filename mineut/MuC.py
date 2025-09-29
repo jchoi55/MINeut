@@ -449,6 +449,49 @@ class MuDecaySimulator:
             print("No flux through detector.")
             return 0, 0
 
+    def get_acceptance_map_fixed_z(
+        self,
+        z_location=293062,         # about 100m away
+        xrange=(-5000,5000), #match yrange to make square
+        yrange=(-77245, 10e2),      #about 10m above and below
+        nx=50,                       # grid resolution (x)
+        ny=50,                       # grid resolution (y)
+        det_radius=1e2               # detector radius
+    ):
+        """
+        Generate a 2D map of the neutrino count (acceptance) at a fixed z-plane.
+
+        Parameters:
+            z_location  - Fixed z where detectors are placed (cm)
+            xrange, yrange - Spatial ranges for X and Y
+            nx, ny      - Number of grid points along x and y
+            det_radius  - Detector radius in cm
+
+        Returns:
+            X, Y, acceptance_map
+        """
+        # Create grid points
+        x_vals = np.linspace(xrange[0], xrange[1], nx)
+        y_vals = np.linspace(yrange[0], yrange[1], ny)
+
+        # Initialize map for detector acceptance
+        acceptance_map = np.zeros((ny, nx))  # y is row, x is column
+
+        # Loop over detector positions
+        for i, y in enumerate(y_vals):
+            for j, x in enumerate(x_vals):
+                nu_eff_ND = self.get_flux_at_generic_location(
+                    det_location=[x, y, z_location],
+                    det_radius=det_radius,
+                    acceptance=True,  #Just count neutrinos, no energy binning
+                )
+
+                acceptance_map[i, j] = nu_eff_ND if nu_eff_ND is not None else 0.0
+
+        # Create meshgrid for plotting
+        X, Y = np.meshgrid(x_vals, y_vals)
+        return X, Y, acceptance_map
+
 
 # class BINSimulator:
 #     """
