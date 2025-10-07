@@ -238,7 +238,7 @@ class MuDecaySimulator:
 
         # get total length of the central orbit
         C = lattice.s(1)  # cm
-
+        
         total_s = self.cycles * C
 
         # Place muons uniformly along travel path
@@ -290,11 +290,13 @@ class MuDecaySimulator:
 
         # Absolute velocity of muons
         self.vmu = const.c_LIGHT * np.sqrt((1 - (const.m_mu / self.pmu["E"]) ** 2))
-
+        
         # spread muons in time according to number of beam lifetimes desired
         self.mutimes = self.s_muon / self.vmu  # time in seconds
+        max_time = total_s / self.vmu #final time
 
         self.muon_lifetime = const.tau0_mu * self.pmu["E"] / const.m_mu
+        print("pmu_E: ",self.pmu["E"])
 
         # Now, if we want to increase our efficiency in the simulation, we better force particles to be close to the detector in some way.
         # Let's enforce this by clipping the s_in_turn range:
@@ -321,13 +323,23 @@ class MuDecaySimulator:
         self.s_in_turn = self.s_in_turn % C
 
         # Acceptance of simulated region
-        self.weights[:, 0] = self.weights[:, 0] * (zacc_min + (C - zacc_max)) / C
+        #self.weights[:, 0] = self.weights[:, 0] * (zacc_min + (C - zacc_max)) / C
 
+        print("before:", sum(self.weights[:, 0]))
         # Apply exponential suppression on total length travelled by muons
-        self.weights[:, 0] = self.weights[:, 0] * (
+        self.weights[:, 0] *= (
             # 1 - np.exp(-self.mutimes / self.muon_lifetime)
-            np.exp(-self.mutimes / self.muon_lifetime)
+            lattice.Nmu_per_bunch*(max_time)*np.exp(-self.mutimes / self.muon_lifetime) / self.muon_lifetime
         )
+
+        print("max time: ", max_time)
+        print("number of samples: ", self.sample_size)
+        print("total s: ", total_s)
+        print("delta t: ", max_time/self.sample_size)
+        print("Nmu per bunch: ", lattice.Nmu_per_bunch)
+        print("muon lifetime: ", self.muon_lifetime)
+        print("mu times: ",self.mutimes)
+        print("after:", sum(self.weights[:, 0]))
 
         # Now deform locations to real space along the lattice
 

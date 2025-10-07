@@ -22,7 +22,7 @@ class Lattice:
             "y",
             "s",
             "angle_of_central_p",
-            "inv_s"
+            "inv_s",
         ]:
             if key in lattice_dict:
                 setattr(self, key, lattice_dict.pop(key))
@@ -110,6 +110,12 @@ class Lattice:
         self.bunch_multiplicity = lattice_dict.pop("bunch_multiplicity", 1)
         self.finj = lattice_dict.pop("finj", 1)
 
+        # lattice designs
+        self.name = lattice_dict.pop("name", 1)
+        self.short_name = lattice_dict.pop("short_name", 1)
+        self.muon_polarization = lattice_dict.pop("muon_polarization", 1)
+        self.n_elements = lattice_dict.pop("n_elements", 1)
+
         for key, value in lattice_dict.items():
             print("Setting additional", key, "to", value)
             self.__setattr__(key, value)
@@ -166,7 +172,7 @@ def create_racetrack_lattice(
 
 
 def create_straight_lattice(
-    total_length=100e2, n_elements=10_000, p0_injected=0.255, p0_ejected=1.25, **kwargs
+    total_length=100e2, n_elements=10_000, p0_injected=10, p0_ejected=10, **kwargs
 ):
 
     n_points = 300
@@ -187,6 +193,8 @@ def create_straight_lattice(
     kwargs["dpdx"] = interp1d(
         u_vals, np.full_like(u_vals, (p0_ejected - p0_injected) / total_length)
     )
+
+    kwargs["n_elements"] = n_elements
 
     lattice_dict.update(kwargs)
 
@@ -514,6 +522,8 @@ def create_RLA_lattice(
         u, np.append(dpdx,dpdx[-1]), bounds_error = True
     )
 
+    kwargs["n_elements"] = n_elements
+
     lattice_dict = create_lattice_dict_from_vertices(
         (x_RLA, y_RLA), n_elements=n_elements
     )
@@ -587,6 +597,8 @@ def append_lattices(
     lattice_dict = create_lattice_dict_from_vertices(
         (xvals, yvals), n_elements=len(xvals)
     )
+
+    kwargs["n_elements"] = lattice1.n_elements + lattice2.n_elements
 
     # Any additional user-input
     lattice_dict.update(kwargs)
