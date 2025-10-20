@@ -113,7 +113,6 @@ class Lattice:
         # lattice designs
         self.name = lattice_dict.pop("name", 1)
         self.short_name = lattice_dict.pop("short_name", 1)
-        self.muon_polarization = lattice_dict.pop("muon_polarization", 1)
         self.n_elements = lattice_dict.pop("n_elements", 1)
 
         for key, value in lattice_dict.items():
@@ -172,7 +171,7 @@ def create_racetrack_lattice(
 
 
 def create_straight_lattice(
-    total_length=100e2, n_elements=10_000, p0_injected=10, p0_ejected=10, **kwargs
+    total_length=100e2, n_elements=10_000, p0_injected=0.225, p0_ejected=1.25, **kwargs
 ):
 
     n_points = 300
@@ -541,9 +540,10 @@ def append_lattices(
     vert_shift,
     hor_shift,
     p0_injection = 0.255,
+    Nmu_per_bunch_inj = 1e6,
     **kwargs,
 ):
-    "Append lattices so they go from one after another in space and time"
+    #Append lattices so they go from one after another in space and time
 
     xvals = lattice1.vertices[0]
     yvals = lattice1.vertices[1]
@@ -605,6 +605,20 @@ def append_lattices(
 
     lattice = Lattice(**lattice_dict)
     lattice.vertices = (xvals, yvals)
+
+    #combine lattice names
+    lattice.name = lattice1.name + "+" + lattice2.name
+    lattice.short_name = lattice1.short_name + "+" + lattice2.short_name
+
+    #use lattice design parameters from the first lattice
+    lattice.duty_factor = lattice1.duty_factor
+    lattice.bunch_multiplicity = lattice1.bunch_multiplicity
+    lattice.finj = lattice1.finj
+
+    if Nmu_per_bunch_inj == lattice1.Nmu_per_bunch:
+        lattice.Nmu_per_bunch = lattice1.Nmu_per_bunch
+    else:
+        lattice.Nmu_per_bunch = Nmu_per_bunch_inj
 
     return lattice
 

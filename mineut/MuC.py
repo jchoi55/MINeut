@@ -9,7 +9,7 @@ from mineut import lattice_tools as lt
 class MuDecaySimulator:
     def __init__(
         self,
-        design,
+        muon_polarization,
         lattice=None,
         nuflavor=None,
         cycles=1,
@@ -40,14 +40,8 @@ class MuDecaySimulator:
         """
 
         # Design contains all necessary inputs to specify the muon storage/accelerator
-        self.design = design
-        self.lattice = lattice
 
-        # Check that design contains all mandatory keys
-        mandatory_keys = ["muon_polarization"]
-        for key in mandatory_keys:
-            if key not in self.design:
-                raise KeyError(f"Mandatory key '{key}' missing from design dictionary.")
+        self.lattice = lattice
 
         self.n_evals = n_evals
         self.preloaded_events = preloaded_events
@@ -77,7 +71,7 @@ class MuDecaySimulator:
         self.muon_charge = (
             -1 if (self.nuflavor == "numu" or self.nuflavor == "nuebar") else +1
         )
-        self.muon_polarization = self.design["muon_polarization"]
+        self.muon_polarization = muon_polarization
         self.NLO = NLO
         self.mudecay_model = mudecay_model
 
@@ -296,7 +290,6 @@ class MuDecaySimulator:
         max_time = total_s / self.vmu #final time
 
         self.muon_lifetime = const.tau0_mu * self.pmu["E"] / const.m_mu
-        print("pmu_E: ",self.pmu["E"])
 
         # Now, if we want to increase our efficiency in the simulation, we better force particles to be close to the detector in some way.
         # Let's enforce this by clipping the s_in_turn range:
@@ -325,21 +318,21 @@ class MuDecaySimulator:
         # Acceptance of simulated region
         #self.weights[:, 0] = self.weights[:, 0] * (zacc_min + (C - zacc_max)) / C
 
-        print("before:", sum(self.weights[:, 0]))
+        #print("before:", sum(self.weights[:, 0]))
         # Apply exponential suppression on total length travelled by muons
         self.weights[:, 0] *= (
             # 1 - np.exp(-self.mutimes / self.muon_lifetime)
             lattice.Nmu_per_bunch*(max_time)*np.exp(-self.mutimes / self.muon_lifetime) / self.muon_lifetime
         )
 
-        print("max time: ", max_time)
-        print("number of samples: ", self.sample_size)
-        print("total s: ", total_s)
-        print("delta t: ", max_time/self.sample_size)
-        print("Nmu per bunch: ", lattice.Nmu_per_bunch)
-        print("muon lifetime: ", self.muon_lifetime)
-        print("mu times: ",self.mutimes)
-        print("after:", sum(self.weights[:, 0]))
+        #print("max time: ", max_time)
+        #print("number of samples: ", self.sample_size)
+        #print("total s: ", total_s)
+        #print("delta t: ", max_time/self.sample_size)
+        #print("Nmu per bunch: ", lattice.Nmu_per_bunch)
+        #print("muon lifetime: ", self.muon_lifetime)
+        #print("mu times: ",self.mutimes)
+        #print("after:", sum(self.weights[:, 0]))
 
         # Now deform locations to real space along the lattice
 
@@ -396,6 +389,7 @@ class MuDecaySimulator:
         det_location=[0, 0, 1e5],
         det_radius=1e2,
         ebins=100,
+        E_cut = 0,
         acceptance=False,
         per_area=True,
         new_polarization=None,
@@ -422,8 +416,8 @@ class MuDecaySimulator:
         # Position of closest approach on the neutrino path
         radial_distance = sintheta * distances.mag
 
-        # Check if neutrino crosses the detector disk
-        in_acceptance = (dotprod > 0) & (radial_distance < det_radius)
+        # Check if neutrino crosses the detector disk and has sufficient energy
+        in_acceptance = (dotprod > 0) & (radial_distance < det_radius) & (self.pnu["E"][mask] > E_cut)
 
         # Detector area
         area = np.pi * det_radius**2
@@ -492,6 +486,7 @@ class MuDecaySimulator:
         # Loop over detector positions
         for i, y in enumerate(y_vals):
             for j, x in enumerate(x_vals):
+
                 nu_eff_ND = self.get_flux_at_generic_location(
                     det_location=[x, y, z_location],
                     det_radius=det_radius,
@@ -503,6 +498,81 @@ class MuDecaySimulator:
         # Create meshgrid for plotting
         X, Y = np.meshgrid(x_vals, y_vals)
         return X, Y, acceptance_map
+    
+    def num_events(
+        self,
+        det_length = 10e2, #detector length [cm]
+        density = 1,          # detector medium density [g/cm^3]
+        acceptance=True,     # optional A(E)
+        
+    ):
+        Enu = self.pnu["E"]
+        
+        decay_weights = self.weights[:, 0]
+
+        if acceptance:
+            acceptance = np.ones_like(Enu)
+
+        # Cross section at each energy
+        sigma = Enu * 1e-38  # cm^2
+
+        n_target = density / 1.67262192e-24 #density / mass of proton [g]
+
+        # Probability of interaction per neutrino (linearized)
+        P_int = n_target * sigma * det_length  # ≈ 1 - exp(-nσl)
+
+        # Integrate over energy bins
+        N_events = np.sum(decay_weights * acceptance * P_int)
+
+        return N_events
+
+    def get_event_map_fixed_z(
+        self,
+        z_location=293062,         # about 100m away
+        xrange=(-5000,5000), #match yrange to make square
+        yrange=(-77245, 10e2),      #about 10m above and below
+        nx=50,                       # grid resolution (x)
+        ny=50,                       # grid resolution (y)
+        det_radius=1e2               # detector radius
+    ):
+
+        mask = np.ones(self.sample_size, dtype=bool)
+        
+        # Create grid points
+        x_vals = np.linspace(xrange[0], xrange[1], nx)
+        y_vals = np.linspace(yrange[0], yrange[1], ny)
+
+        # Initialize map for detector events
+        event_map = np.zeros((ny, nx))  # y is row, x is column
+
+        # Loop over detector positions
+        for i, y in enumerate(y_vals):
+            for j, x in enumerate(x_vals):
+                
+                det_location=np.asarray([x, y, z_location])
+                
+                det_vector = vector.array(
+                    {"x": det_location[0], "y": det_location[1], "z": det_location[2]}
+                )
+                # normal_to_detector_plane = det_vector.unit()
+                distances = det_vector - self.pos[mask]
+                neutrino_direction = self.pnu[mask].to_3D().unit()
+                dotprod = distances.dot(neutrino_direction)
+
+                # Project distance vector onto neutrino direction
+                sintheta = np.sqrt(1 - distances.unit().dot(neutrino_direction) ** 2)
+
+                # Position of closest approach on the neutrino path
+                radial_distance = sintheta * distances.mag
+
+                # Check if neutrino crosses the detector disk
+                in_acceptance = (dotprod > 0) & (radial_distance < det_radius)
+
+                event_map[i, j] = self.num_events(in_acceptance)
+
+        # Create meshgrid for plotting
+        X, Y = np.meshgrid(x_vals, y_vals)
+        return X, Y, event_map
 
 
 # class BINSimulator:
