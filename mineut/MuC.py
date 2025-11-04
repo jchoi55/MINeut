@@ -382,6 +382,15 @@ class MuDecaySimulator:
             self.pnu = self.pnu.rotateX(np.pi)
             self.pmu = self.pmu.rotateX(np.pi)
 
+        print("sample_size:", self.sample_size)
+        print("pos x range:", np.min(self.pos["x"]), np.mean(self.pos["x"]), np.max(self.pos["x"]))
+        print("pos y range:", np.min(self.pos["y"]), np.mean(self.pos["y"]), np.max(self.pos["y"]))
+        print("pos z range:", np.min(self.pos["z"]), np.mean(self.pos["z"]), np.max(self.pos["z"]))
+        print("s_in_turn min/max:", np.min(self.s_in_turn), np.max(self.s_in_turn))
+        print("u_parameter min/max:", np.min(u_parameter), np.max(u_parameter))
+        print("mutimes min/max:", np.min(self.mutimes), np.max(self.mutimes))
+        print("muon_lifetime min/max:", np.min(self.muon_lifetime), np.max(self.muon_lifetime))
+
         return self
 
     def get_flux_at_generic_location(
@@ -506,6 +515,8 @@ class MuDecaySimulator:
         acceptance=True,     # optional A(E)
         
     ):
+        
+
         Enu = self.pnu["E"]
         
         decay_weights = self.weights[:, 0]
@@ -526,53 +537,155 @@ class MuDecaySimulator:
 
         return N_events
 
+    # def get_event_map_fixed_z(
+    #     self,
+    #     z_location=293062,         # about 100m away
+    #     xrange=(-5000,5000), #match yrange to make square
+    #     yrange=(-77245, 10e2),      #about 10m above and below
+    #     nx=50,                       # grid resolution (x)
+    #     ny=50,                       # grid resolution (y)
+    #     det_radius=1e2               # detector radius
+    # ):
+
+    #     mask = np.ones(self.sample_size, dtype=bool)
+        
+    #     # Create grid points
+    #     x_vals = np.linspace(xrange[0], xrange[1], nx)   # [-5000, -4950, ..., ]
+    #     y_vals = np.linspace(yrange[0], yrange[1], ny)
+
+    #     # Initialize map for detector events
+    #     event_map = np.zeros((ny, nx))  # y is row, x is column
+
+    #     # Loop over detector positions
+    #     for i, y in enumerate(y_vals):
+    #         for j, x in enumerate(x_vals):
+                
+    #             det_location=np.asarray([x, y, z_location])
+                
+    #             det_vector = vector.array(
+    #                 {"x": det_location[0], "y": det_location[1], "z": det_location[2]}
+    #             )
+    #             # normal_to_detector_plane = det_vector.unit()
+    #             distances = det_vector - self.pos[mask]
+    #             neutrino_direction = self.pnu[mask].to_3D().unit()
+    #             dotprod = distances.dot(neutrino_direction)
+
+    #             # Project distance vector onto neutrino direction
+    #             sintheta = np.sqrt(1 - distances.unit().dot(neutrino_direction) ** 2)
+
+    #             # Position of closest approach on the neutrino path
+    #             radial_distance = sintheta * distances.mag
+
+    #             # Check if neutrino crosses the detector disk
+    #             in_acceptance = (dotprod > 0) & (radial_distance < det_radius)
+
+    #             event_map[i, j] = self.num_events(acceptance=in_acceptance)
+
+    #     # Create meshgrid for plotting
+    #     X, Y = np.meshgrid(x_vals, y_vals)
+    #     return X, Y, event_map
+
+    #version without nested for loops
+    # def get_event_map_fixed_z(
+    #     self,
+    #     z_location=293062,          # about 100 m away
+    #     xrange=(-5000, 5000),
+    #     yrange=(-77245, 1e3),
+    #     nx=100,
+    #     ny=100,
+    #     det_radius=1e2              # detector radius [cm]
+    # ):
+    #     mask = np.ones(self.sample_size, dtype=bool)
+    #     pos = self.pos[mask]
+    #     pnu = self.pnu[mask].to_3D().unit()
+
+    #     # Define detector grid
+    #     x_vals = np.linspace(xrange[0], xrange[1], nx)
+    #     y_vals = np.linspace(yrange[0], yrange[1], ny)
+    #     X, Y = np.meshgrid(x_vals, y_vals)
+
+    #     # Flatten grid for vectorized computation
+    #     det_positions = np.stack([X.ravel(), Y.ravel(), np.full(X.size, z_location)], axis=1)
+    #     det_vectors = vector.array({"x": det_positions[:, 0],
+    #                                 "y": det_positions[:, 1],
+    #                                 "z": det_positions[:, 2]})
+
+    #     # Compute distances (broadcasted)
+    #     # shape: (num_detectors, num_neutrinos)
+    #     distances = det_vectors[:, None] - pos[None, :]
+
+    #     # Unit directions and projections
+    #     distances_unit = distances.unit()
+    #     dotprod = distances.dot(pnu)
+    #     sintheta = np.sqrt(1 - (distances_unit.dot(pnu)) ** 2)
+    #     radial_distance = sintheta * distances.mag
+
+    #     # Geometric acceptance check
+    #     in_acceptance = (dotprod > 0) & (radial_distance < det_radius)
+
+    #     # Now compute number of events per detector position
+
+    #     decay_weights = self.weights[:, 0]
+    #     P_int = self.pnu["E"] * 1e-38 * (1 / 1.67262192e-24) * 10e2  # rough interaction prob
+
+    #     # Weighted event counts: sum over neutrinos per detector
+    #     event_map_flat = np.sum(in_acceptance * decay_weights * P_int, axis=1)
+    #     event_map = event_map_flat.reshape(ny, nx)
+
+    #     return X, Y, event_map
+  
     def get_event_map_fixed_z(
         self,
-        z_location=293062,         # about 100m away
-        xrange=(-5000,5000), #match yrange to make square
-        yrange=(-77245, 10e2),      #about 10m above and below
-        nx=50,                       # grid resolution (x)
-        ny=50,                       # grid resolution (y)
-        det_radius=1e2               # detector radius
+        detect_loc,
+        xrange=(-5000, 5000),
+        yrange=(-77245, 1e3),
+        nx=100,
+        ny=100,
+        det_radius=1e2
     ):
+        # print(np.max(self.mutimes))
+        # print(np.sum(self.weights[:,0]))
 
-        mask = np.ones(self.sample_size, dtype=bool)
-        
-        # Create grid points
-        x_vals = np.linspace(xrange[0], xrange[1], nx)
-        y_vals = np.linspace(yrange[0], yrange[1], ny)
+        p_dir = self.pnu.to_3D().unit()
 
-        # Initialize map for detector events
-        event_map = np.zeros((ny, nx))  # y is row, x is column
+        event_map = np.zeros((nx, ny))
+        X = None
+        Y = None
 
-        # Loop over detector positions
-        for i, y in enumerate(y_vals):
-            for j, x in enumerate(x_vals):
-                
-                det_location=np.asarray([x, y, z_location])
-                
-                det_vector = vector.array(
-                    {"x": det_location[0], "y": det_location[1], "z": det_location[2]}
-                )
-                # normal_to_detector_plane = det_vector.unit()
-                distances = det_vector - self.pos[mask]
-                neutrino_direction = self.pnu[mask].to_3D().unit()
-                dotprod = distances.dot(neutrino_direction)
+        for t in detect_loc:
+            z_det, y_offset = t
 
-                # Project distance vector onto neutrino direction
-                sintheta = np.sqrt(1 - distances.unit().dot(neutrino_direction) ** 2)
+            t_vals = (z_det - self.pos["z"]) / p_dir["z"]
+            x_hit = self.pos["x"] + t_vals * p_dir["x"]
+            y_hit = self.pos["y"] + t_vals * p_dir["y"]
 
-                # Position of closest approach on the neutrino path
-                radial_distance = sintheta * distances.mag
+            r2 = (x_hit**2 + (y_hit + y_offset)**2)
+            in_acceptance = (t_vals > 0) & (r2 < det_radius**2)
 
-                # Check if neutrino crosses the detector disk
-                in_acceptance = (dotprod > 0) & (radial_distance < det_radius)
+            sigma = self.pnu["E"][in_acceptance] * 1e-38
+            P_int = (1 / 1.67262192e-24) * sigma * 10e2
 
-                event_map[i, j] = self.num_events(in_acceptance)
+            events, x_arr, y_arr = np.histogram2d(
+                x_hit[in_acceptance],
+                y_hit[in_acceptance],
+                bins=[nx, ny],
+                range=[xrange, yrange],
+                weights=self.weights[in_acceptance, 0] * P_int
+            )
 
-        # Create meshgrid for plotting
-        X, Y = np.meshgrid(x_vals, y_vals)
+            event_map += events  # accumulate directly, no concatenation
+            if X is None:
+                X, Y = x_arr, y_arr
+            
+
+        # print(self.pnu["E"][in_acceptance])
+        # print(P_int)
+        # print(len(P_int))
+        # print(len(self.weights[in_acceptance, 0]))
+        # print(np.sum(self.weights[in_acceptance, 0]*P_int))
+
         return X, Y, event_map
+
 
 
 # class BINSimulator:

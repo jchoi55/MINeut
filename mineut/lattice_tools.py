@@ -580,7 +580,7 @@ def append_lattices(
     u_total = s_total / total_length
     ds_total = np.concatenate((ds_length1, np.array([0]), ds_trans, np.array([0]), ds_length2))
 
-    #print("len(s_total):", len(s_total))
+    print("total:", total_length)
     #print("len(u_total):", len(u_total))
     #print("len(ds_total):", len(ds_total))
     #print("len(dpdx_total):", len(dpdx))
@@ -617,8 +617,10 @@ def append_lattices(
 
     if Nmu_per_bunch_inj == lattice1.Nmu_per_bunch:
         lattice.Nmu_per_bunch = lattice1.Nmu_per_bunch
+        print("is same; lattice nmu per bunch is:",lattice.Nmu_per_bunch)
     else:
         lattice.Nmu_per_bunch = Nmu_per_bunch_inj
+        print("is different; lattice nmu per bunch is:",lattice.Nmu_per_bunch)
 
     return lattice
 
