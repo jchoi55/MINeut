@@ -540,7 +540,7 @@ def append_lattices(
     vert_shift,
     hor_shift,
     p0_injection = 0.255,
-    Nmu_per_bunch_inj = 1e6,
+    Nmu_per_bunch_inj = 2e12,
     **kwargs,
 ):
     #Append lattices so they go from one after another in space and time
@@ -580,7 +580,7 @@ def append_lattices(
     u_total = s_total / total_length
     ds_total = np.concatenate((ds_length1, np.array([0]), ds_trans, np.array([0]), ds_length2))
 
-    print("total:", total_length)
+    #print("total:", total_length)
     #print("len(u_total):", len(u_total))
     #print("len(ds_total):", len(ds_total))
     #print("len(dpdx_total):", len(dpdx))
