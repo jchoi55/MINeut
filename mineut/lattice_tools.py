@@ -164,8 +164,9 @@ def create_racetrack_lattice(
     # Any additional user-input
     lattice_dict.update(kwargs)
 
+    #the x-coordinates are the vertical component of the racetrack, and the z-coordinates are the horizontal component of the racetrack
     lattice = Lattice(**lattice_dict)
-    lattice.vertices = (x_racetrack, y_racetrack)
+    lattice.vertices = (x_racetrack,y_racetrack, np.full_like(x_racetrack, 0))
 
     return lattice
 
@@ -198,13 +199,24 @@ def create_straight_lattice(
     lattice_dict.update(kwargs)
 
     lattice = Lattice(**lattice_dict)
-    lattice.vertices = (x_track, y_track)
+    # vertices format: (x_points, y_points, z_points)
+    # set x_points to the longitudinal coordinate (previously x_track),
+    # y_points to the horizontal coordinate (previously y_track),
+    # z_points to vertical (zeros for straight lattice)
+    lattice.vertices = (x_track, y_track, np.full_like(x_track, 0))
 
     return lattice
 
 
-def get_s_element(x, y):
-    return np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2)
+def get_s_element(x, y, z=None):
+    """Return segment lengths between consecutive points.
+
+    If z is provided, compute 3D lengths; otherwise 2D.
+    """
+    if z is None:
+        return np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2)
+    else:
+        return np.sqrt(np.diff(x) ** 2 + np.diff(y) ** 2 + np.diff(z) ** 2)
 
 
 def create_RLA_lattice(
@@ -513,6 +525,25 @@ def create_RLA_lattice(
     ds_length = get_s_element(x_RLA, y_RLA)
     s = np.concatenate([[0], np.cumsum(ds_length)])
     u = s / s[-1]
+
+    # define piecewise beta: example linear on straights, zero on arcs
+    beta = np.zeros_like(s)
+    # example user parameters for the straight segments (a,b) per straight pass
+    # these are just examples — replace with your desired a,b values per straight
+    straight_params = [
+        [0.000000e+00, 8.290000e+04],   # seg 1  (s_start, s_end)
+        [2.805025e+05, 3.634025e+05],   # seg 9
+        [5.809080e+05, 6.638080e+05],  # seg 17
+        [9.264227e+05, 1.009323e+06],  # seg 25
+        [1.380230e+06, s[-1]],  # seg 33 (final straight)
+    ]
+
+    for seg in straight_params:
+        
+        mask = (s >= seg[0]) & (s <= seg[1])
+        beta[mask] = 0.0105498 * s[mask] + 21.5768e2
+    print(beta)
+
     kwargs["beam_p0"] = interp1d(
         u, np.append([p0_injection], p0_injection + np.cumsum(dpdx * ds_length))
     )
@@ -523,6 +554,23 @@ def create_RLA_lattice(
 
     kwargs["n_elements"] = n_elements
 
+    emittance = 25e-3   # [cm-rad]
+
+    beamsize = np.sqrt(beta * emittance)
+    # prevent divide-by-zero
+    beamdiv = np.where(beta < 1.0, beta, np.sqrt(emittance / beta))
+
+    # ---------------------------------------
+    # Store as interpolation functions
+    # ---------------------------------------
+    #kwargs["beta"] = interp1d(u, beta, fill_value="extrapolate")
+    kwargs["beamsize_x"] = interp1d(u, beamsize, fill_value="extrapolate")
+    kwargs["beamdiv_x"] = interp1d(u, beamdiv, fill_value="extrapolate")
+
+    # You can copy these to y if symmetric:
+    kwargs["beamsize_y"] = kwargs["beamsize_x"]
+    kwargs["beamdiv_y"]  = kwargs["beamdiv_x"]
+
     lattice_dict = create_lattice_dict_from_vertices(
         (x_RLA, y_RLA), n_elements=n_elements
     )
@@ -530,8 +578,19 @@ def create_RLA_lattice(
     lattice_dict.update(kwargs)
 
     lattice = Lattice(**lattice_dict)
-    lattice.vertices = (x_RLA, y_RLA)
+    lattice.vertices = (x_RLA, y_RLA, np.full_like(x_RLA, 0))
 
+    fig, ax = pt.std_fig(figsize=(4,3))
+    ax.scatter(s, beta, s=1, color='blue')
+
+    ax2 = ax.twinx()
+    ax2.scatter(s, np.append(dpdx, dpdx[-1]), s=1, color='green')
+
+    #ax.set_ylim(0,2e4)
+    ax.set_xlabel("s [cm]")
+    ax.set_ylabel("beta [cm]")
+    ax2.set_ylabel("dpdx [GeV/cm]")
+    ax.set_title("beta function along the RLA lattice")
     return lattice
 
 def append_lattices(
@@ -545,10 +604,14 @@ def append_lattices(
 ):
     #Append lattices so they go from one after another in space and time
 
+    # Extract vertex arrays (support 2D or 3D vertex tuples)
     xvals = lattice1.vertices[0]
     yvals = lattice1.vertices[1]
+    zvals = lattice1.vertices[2] if len(lattice1.vertices) > 2 else np.zeros_like(xvals)
+
     xvals2 = lattice2.vertices[0]
     yvals2 = lattice2.vertices[1]
+    zvals2 = lattice2.vertices[2] if len(lattice2.vertices) > 2 else np.zeros_like(xvals2)
 
     ds_length1 = get_s_element(xvals, yvals)
     s1 = np.concatenate([[0], np.cumsum(ds_length1)])
@@ -558,21 +621,36 @@ def append_lattices(
     s2 = np.concatenate([[0], np.cumsum(ds_length2)])
     u2 = s2 / s2[-1]
 
+    # Shift second lattice so it follows the first in space.
+    # Note: xvals are longitudinal (maps to world z), yvals horizontal (world x), zvals vertical (world y).
     xRLAshifted = xvals2 + xvals[-1] + hor_shift
-    yRLAshifted = yvals2 + yvals[-1] + vert_shift
+    yRLAshifted = yvals2 + yvals[-1]
+    zRLAshifted = zvals2 + zvals[-1] + vert_shift
 
-    transitionx = np.linspace(xvals[-1], xRLAshifted[0], 10_000)
-    transitiony = np.linspace(yvals[-1], yRLAshifted[0], 10_000)
+    # Create a single diagonal transition directly between the lattices
+    # Note: in our coordinate system:
+    # - x is longitudinal (maps to world z)
+    # - y is horizontal (maps to world x)
+    # - z is vertical (maps to world y)
+    Ntrans = 10_000
+    
+    # Create a single diagonal transition that connects the end of first lattice
+    # to the start of second lattice
+    transitionx = np.linspace(xvals[-1], xRLAshifted[0], Ntrans)
+    transitiony_hor = np.linspace(yvals[-1], yRLAshifted[0], Ntrans)
+    transitiony = np.linspace(zvals[-1], zRLAshifted[0], Ntrans)
 
-    xvals = np.concatenate((xvals,transitionx,xRLAshifted))
-    yvals = np.concatenate((yvals,transitiony,yRLAshifted))
+    xvals = np.concatenate((xvals, transitionx, xRLAshifted))
+    yvals = np.concatenate((yvals, transitiony_hor, yRLAshifted))
+    zvals = np.concatenate((zvals, transitiony, zRLAshifted))
 
     dpdx1 = lattice1.dpdx(u1)
     dpdx2 = lattice2.dpdx(u2)  # still local
     dpdxtrans = np.full_like(transitionx, 0.0)
     dpdx = np.concatenate((dpdx1, dpdxtrans, dpdx2))
 
-    ds_trans = get_s_element(transitionx, transitiony)
+    # compute ds for transition using 3D segments
+    ds_trans = get_s_element(transitionx, transitiony_hor, transitiony)
     strans = np.concatenate([[0], np.cumsum(ds_trans)])
 
     total_length = s1[-1] + strans[-1] + s2[-1]
@@ -595,7 +673,7 @@ def append_lattices(
     )
 
     lattice_dict = create_lattice_dict_from_vertices(
-        (xvals, yvals), n_elements=len(xvals)
+        (xvals, yvals, zvals), n_elements=len(xvals)
     )
 
     kwargs["n_elements"] = lattice1.n_elements + lattice2.n_elements
@@ -604,7 +682,10 @@ def append_lattices(
     lattice_dict.update(kwargs)
 
     lattice = Lattice(**lattice_dict)
-    lattice.vertices = (xvals, yvals)
+    # vertices format: (x_points, y_points, z_points)
+    # set x_points to longitudinal (xvals), y_points to horizontal (yvals), z_points to vertical (zvals)
+    # Use the combined zvals computed above (do not overwrite with zeros) so vertical shifts are preserved.
+    lattice.vertices = (xvals, yvals, zvals)
 
     #combine lattice names
     lattice.name = lattice1.name + "+" + lattice2.name
@@ -691,32 +772,59 @@ def advance_in_pos(x0, y0, theta_0, dtheta, ds):
 
 
 def create_lattice_dict_from_vertices(vertices, n_elements=None):
-    x_points, y_points = vertices
+    # Accept either (x, y) or (x, y, z) vertices. If only 2D provided, z is set to zeros.
+    if len(vertices) == 2:
+        x_points, y_points = vertices
+        z_points = np.zeros_like(x_points)
+    elif len(vertices) == 3:
+        x_points, y_points, z_points = vertices
+    else:
+        raise ValueError("vertices must be a tuple/list of length 2 or 3: (x, y) or (x, y, z)")
+
     x_points = np.asarray(x_points)
     y_points = np.asarray(y_points)
+    z_points = np.asarray(z_points)
 
     if n_elements is None:
         n_elements = len(x_points)
     else:
         n_elements = min(max(n_elements, len(x_points)), int(1e6))
 
-    # Compute arc-length (s) along the curve
+    # Compute arc-length (s) along the curve (support 3D)
     dx = np.diff(x_points)
     dy = np.diff(y_points)
-    segment_lengths = np.sqrt(dx**2 + dy**2)
+    dz = np.diff(z_points)
+    segment_lengths = np.sqrt(dx**2 + dy**2 + dz**2)
     s_vals = np.concatenate([[0], np.cumsum(segment_lengths)])
     total_length = s_vals[-1]
 
     # Create interpolation functions
     fx = interp1d(s_vals, x_points, kind="linear")
     fy = interp1d(s_vals, y_points, kind="linear")
+    fz = interp1d(s_vals, z_points, kind="linear")
 
     # New arc-length positions for smooth sampling
     s_dense = np.linspace(0, total_length, n_elements)
 
     x_dense = fx(s_dense)
     y_dense = fy(s_dense)
-    angle_dense = np.arctan2(np.gradient(y_dense), np.gradient(x_dense))
+    z_dense = fz(s_dense)
+
+    # Compute derivatives w.r.t. s (tangent vector components)
+    dx_ds = np.gradient(x_dense, s_dense)
+    dy_ds = np.gradient(y_dense, s_dense)
+    dz_ds = np.gradient(z_dense, s_dense)
+
+    # 3D unit tangent vector along the central orbit
+    tangent_mag = np.sqrt(dx_ds ** 2 + dy_ds ** 2 + dz_ds ** 2)
+    # avoid division by zero
+    tangent_mag[tangent_mag == 0] = 1.0
+    tx = dx_ds / tangent_mag
+    ty = dy_ds / tangent_mag
+    tz = dz_ds / tangent_mag
+
+    # Keep backward-compatible single angle (projection in xy-plane)
+    angle_dense = np.arctan2(dy_ds, dx_ds)
 
     # Normalize to u ∈ [0, 1]
     u = np.linspace(0, 1, n_elements)
@@ -724,8 +832,17 @@ def create_lattice_dict_from_vertices(vertices, n_elements=None):
     lattice_dict = {
         "x": interp1d(u, x_dense, bounds_error=True),
         "y": interp1d(u, y_dense, bounds_error=True),
+        "z": interp1d(u, z_dense, bounds_error=True),
         "s": interp1d(u, s_dense, bounds_error=True),
         "angle_of_central_p": interp1d(u, angle_dense, bounds_error=True),
+        # tangent returns an (3, N) array when evaluated; keep as callable that returns stacked array
+        "tangent": lambda uu: np.vstack(
+            [
+                interp1d(u, tx, bounds_error=True)(uu),
+                interp1d(u, ty, bounds_error=True)(uu),
+                interp1d(u, tz, bounds_error=True)(uu),
+            ]
+        ),
         "inv_s": interp1d(s_dense, u, bounds_error=True),
     }
 
@@ -1062,3 +1179,4 @@ def plot_lattice(df):
         dpi=500,
         bbox_inches="tight",
     )
+
