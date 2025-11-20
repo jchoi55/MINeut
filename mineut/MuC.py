@@ -447,7 +447,7 @@ class MuDecaySimulator:
             return Enu_ND, flux_nu_ND
         else:
             print("No flux through detector.")
-            return 0, 0
+            return ebins, 0 * ebins[:-1]
 
 
 # class BINSimulator:
