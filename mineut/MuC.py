@@ -339,20 +339,26 @@ class MuDecaySimulator:
 
         # Now deform locations to real space along the lattice
 
-        # put everyone in the z axis
+        # put everyone in the z axis (arc-length) as a fallback
         self.pos["z"] = self.s_in_turn
 
-        # Straight outta lattice parameterization
-        self.pos["z"] = lattice.x(u_parameter)
-        self.pos["y"] = lattice.y(u_parameter)
-        self.pos["x"] = np.zeros(self.sample_size)
+        # If lattice provides z(u), use full 3D coordinates; otherwise
+        # keep the previous mapping (z <- lattice.x, x <- lattice.y, y <- 0)
+        if hasattr(lattice, "z"):
+            self.pos["x"] = lattice.x(u_parameter)
+            self.pos["y"] = lattice.y(u_parameter)
+            self.pos["z"] = lattice.z(u_parameter)
+        else:
+            # Place in xz-plane with y being vertical (backwards-compatible mapping)
+            self.pos["z"] = lattice.x(u_parameter)
+            self.pos["x"] = lattice.y(u_parameter)
+            self.pos["y"] = np.zeros(self.sample_size)
 
-        # Rotate to central orbit
-        theta_central_orbit = lattice.angle_of_central_p(u_parameter)
-        self.pnu = self.pnu.rotateX(-theta_central_orbit)
-        self.pmu = self.pmu.rotateX(-theta_central_orbit)
+        # If lattice provides a 3D tangent, build local transverse basis and map
+        # muons/neutrinos directly into 3D world coordinates. Otherwise
+        # fall back to the previous planar rotateX + sin/cos projection.
 
-        # Rotation in 2D commutes, so as long as we only rotation in transverse plane
+        # Sample transverse beam envelopes
         x_horizontal = np.random.normal(
             loc=0.0,
             scale=lattice.beamsize_x(u_parameter),
@@ -364,11 +370,133 @@ class MuDecaySimulator:
             size=self.sample_size,
         )
 
-        # Now shift coordinates by location of beam envelope
-        # vertical component is trivial
-        self.pos["x"] = self.pos["x"] + x_vertical
-        self.pos["z"] = self.pos["z"] + x_horizontal * np.sin(theta_central_orbit)
-        self.pos["y"] = self.pos["y"] + x_horizontal * np.cos(theta_central_orbit)
+        if hasattr(lattice, "tangent"):
+            # lattice.tangent(u) returns stacked array [3, N]
+            t_stack = lattice.tangent(u_parameter)
+            # ensure shape (3, N)
+            t_stack = np.asarray(t_stack)
+            if t_stack.shape[0] != 3:
+                t_stack = t_stack.reshape(3, -1)
+
+            txL = t_stack[0, :]
+            tyL = t_stack[1, :]
+            tzL = t_stack[2, :]
+
+            # Remap lattice-local tangent components (xL,yL,zL) to world axes (xW,yW,zW):
+            # xW = yL, yW = zL, zW = xL
+            tx = tyL
+            ty = tzL
+            tz = txL
+
+            # normalize just in case
+            tnorm = np.sqrt(tx**2 + ty**2 + tz**2)
+            tnorm[tnorm == 0] = 1.0
+            tx /= tnorm
+            ty /= tnorm
+            tz /= tnorm
+
+            # Choose a reference vector for constructing a transverse axis. Prefer z-axis.
+            ref_x = np.zeros_like(tx)
+            ref_y = np.zeros_like(ty)
+            ref_z = np.ones_like(tz)
+
+            # cross(ref, t) -> n1 (may be small if t ~ ref)
+            n1_x = ref_y * tz - ref_z * ty
+            n1_y = ref_z * tx - ref_x * tz
+            n1_z = ref_x * ty - ref_y * tx
+
+            n1_mag = np.sqrt(n1_x**2 + n1_y**2 + n1_z**2)
+            # where n1 magnitude is too small (t roughly parallel ref), use y-axis as ref
+            small = n1_mag < 1e-8
+            if np.any(small):
+                # alternate ref = y-axis
+                ref_x2 = np.zeros_like(tx)
+                ref_y2 = np.ones_like(ty)
+                ref_z2 = np.zeros_like(tz)
+                n1_x2 = ref_y2 * tz - ref_z2 * ty
+                n1_y2 = ref_z2 * tx - ref_x2 * tz
+                n1_z2 = ref_x2 * ty - ref_y2 * tx
+                n1_x[small] = n1_x2[small]
+                n1_y[small] = n1_y2[small]
+                n1_z[small] = n1_z2[small]
+                n1_mag = np.sqrt(n1_x**2 + n1_y**2 + n1_z**2)
+
+            # normalize n1
+            n1_x /= n1_mag
+            n1_y /= n1_mag
+            n1_z /= n1_mag
+
+            # n2 = t cross n1
+            n2_x = ty * n1_z - tz * n1_y
+            n2_y = tz * n1_x - tx * n1_z
+            n2_z = tx * n1_y - ty * n1_x
+
+            # normalize n2
+            n2_mag = np.sqrt(n2_x**2 + n2_y**2 + n2_z**2)
+            n2_mag[n2_mag == 0] = 1.0
+            n2_x /= n2_mag
+            n2_y /= n2_mag
+            n2_z /= n2_mag
+
+            # Base lattice position (center of beam)
+            # Map lattice coordinates (xL,yL,zL) to world coords (xW,yW,zW):
+            # xW = yL, yW = zL, zW = xL
+            self.pos["x"] = lattice.y(u_parameter)
+            self.pos["y"] = lattice.z(u_parameter)
+            self.pos["z"] = lattice.x(u_parameter)
+
+            # Offsets in world coords: horizontal -> n1, vertical -> n2
+            self.pos["x"] = self.pos["x"] + x_horizontal * n1_x + x_vertical * n2_x
+            self.pos["y"] = self.pos["y"] + x_horizontal * n1_y + x_vertical * n2_y
+            self.pos["z"] = self.pos["z"] + x_horizontal * n1_z + x_vertical * n2_z
+
+            # Map particle momenta (px,py,pz) from local beam frame into world frame via basis
+            # local frame: (n1, n2, t) basis; pmu stores px,py,pz in that local frame
+            pmu_px = self.pmu["px"]
+            pmu_py = self.pmu["py"]
+            pmu_pz = self.pmu["pz"]
+
+            new_pmu_x = pmu_px * n1_x + pmu_py * n2_x + pmu_pz * tx
+            new_pmu_y = pmu_px * n1_y + pmu_py * n2_y + pmu_pz * ty
+            new_pmu_z = pmu_px * n1_z + pmu_py * n2_z + pmu_pz * tz
+
+            self.pmu["px"] = new_pmu_x
+            self.pmu["py"] = new_pmu_y
+            self.pmu["pz"] = new_pmu_z
+
+            # Do the same mapping for neutrino momenta (they are in self.pnu)
+            try:
+                pnu_px = self.pnu["px"]
+                pnu_py = self.pnu["py"]
+                pnu_pz = self.pnu["pz"]
+
+                new_pnu_x = pnu_px * n1_x + pnu_py * n2_x + pnu_pz * tx
+                new_pnu_y = pnu_px * n1_y + pnu_py * n2_y + pnu_pz * ty
+                new_pnu_z = pnu_px * n1_z + pnu_py * n2_z + pnu_pz * tz
+
+                self.pnu["px"] = new_pnu_x
+                self.pnu["py"] = new_pnu_y
+                self.pnu["pz"] = new_pnu_z
+            except Exception:
+                # if pnu doesn't have component access, skip explicit remap
+                pass
+
+            # If direction requires flipping (counter-clockwise), flip the tangent/basis
+            if direction == "counter-clockwise":
+                self.pos["x"] = -1 * self.pos["x"]
+                self.pnu["px"] = -1 * self.pnu["px"]
+                self.pmu["px"] = -1 * self.pmu["px"]
+
+        else:
+            # Backwards-compatible planar behavior
+            theta_central_orbit = lattice.angle_of_central_p(u_parameter)
+            self.pnu = self.pnu.rotateX(-theta_central_orbit)
+            self.pmu = self.pmu.rotateX(-theta_central_orbit)
+
+            # vertical stays in y
+            self.pos["y"] = self.pos["y"] + x_vertical
+            self.pos["x"] = self.pos["x"] + x_horizontal * np.sin(theta_central_orbit)
+            self.pos["z"] = self.pos["z"] + x_horizontal * np.cos(theta_central_orbit)
 
         # Shift time so t = 0 is bunch crossing (NOTE: mutimes will always be negative.)
         t_per_turn = C / self.vmu
@@ -698,6 +826,8 @@ class MuDecaySimulator:
             )
 
             event_map += events  # accumulate directly, no concatenation
+
+            event_map *= 5 * np.pi * 1e7  # 5 Hz injection rate * seconds in a year
             if X is None:
                 X, Y = x_arr, y_arr
 
@@ -708,6 +838,308 @@ class MuDecaySimulator:
         # print(np.sum(self.weights[in_acceptance, 0]*P_int))
 
         return X, Y, event_map
+
+    def get_event_counts_vs_time(
+        self,
+        detect_loc,
+        nbins=200,
+        t_bins=None,
+        det_radius=1e2,
+    ):
+        """Return event counts binned in muon decay time for the given detector locations.
+
+        Args:
+            detect_loc: list of (z_det, y_offset) detector tuples (same as get_event_map_fixed_z)
+            nbins: number of time bins to use if t_bins is None
+            t_bins: optional array of bin edges in seconds
+            det_radius: detector acceptance radius (cm)
+
+        Returns:
+            (t_centers, counts) where t_centers are bin centres in seconds and counts are
+            the predicted number of neutrino interaction events (weights * P_int) in each bin.
+        """
+        p_dir = self.pnu.to_3D().unit()
+
+        # contributions per simulated decay
+        contributions = np.zeros(self.sample_size)
+
+        for t in detect_loc:
+            z_det, y_offset = t
+
+            t_vals = (z_det - self.pos["z"]) / p_dir["z"]
+            x_hit = self.pos["x"] + t_vals * p_dir["x"]
+            y_hit = self.pos["y"] + t_vals * p_dir["y"]
+
+            r2 = x_hit**2 + (y_hit + y_offset) ** 2
+            in_acceptance = (t_vals > 0) & (r2 < det_radius**2)
+
+            if not np.any(in_acceptance):
+                continue
+
+            sigma = self.pnu["E"][in_acceptance] * 1e-38
+            # use same linearized P_int approximation as in get_event_map_fixed_z
+            P_int = (1 / 1.67262192e-24) * sigma * 10e2
+
+            contributions[in_acceptance] += self.weights[in_acceptance, 0] * P_int
+
+        times = np.asarray(self.mutimes)
+        if t_bins is None:
+            tmin, tmax = times.min(), times.max()
+            t_bins = np.linspace(tmin, tmax, nbins + 1)
+
+        counts, edges = np.histogram(times, bins=t_bins, weights=contributions)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        return centers, counts
+
+    def plot_event_counts_vs_time(
+        self,
+        detect_loc,
+        nbins=200,
+        t_bins=None,
+        det_radius=1e2,
+        figsize=(6, 3),
+        xlabel=None,
+        ylabel=None,
+    ):
+        """Plot predicted neutrino interaction counts vs muon decay time.
+
+        Returns (fig, ax).
+        """
+        import matplotlib.pyplot as plt
+
+        centers, counts = self.get_event_counts_vs_time(
+            detect_loc=detect_loc, nbins=nbins, t_bins=t_bins, det_radius=det_radius
+        )
+
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.step(1e9 * centers, counts, where="mid", color="C0")
+        ax.set_xlabel(xlabel or "muon time (ns)")
+        ax.set_ylabel(ylabel or "Predicted neutrino events")
+        ax.grid(True)
+        return fig, ax
+
+    def get_event_counts_vs_energy(
+        self,
+        detect_loc,
+        nbins=50,
+        e_bins=None,
+        log_e=True,
+        det_radius=1e2,
+    ):
+        """Return event counts binned in neutrino energy for the given detector locations.
+
+        Args:
+            detect_loc: list of (z_det, y_offset) detector tuples (same as get_event_map_fixed_z)
+            nbins: number of energy bins to use if e_bins is None
+            e_bins: optional array of bin edges in GeV
+            det_radius: detector acceptance radius (cm)
+
+        Returns:
+            (e_centers, counts) where e_centers are bin centres in GeV and counts are
+            the predicted number of neutrino interaction events (weights * P_int) in each bin.
+        """
+        p_dir = self.pnu.to_3D().unit()
+
+        # Store neutrino energies and interaction contributions for events in acceptance
+        nu_energies = []
+        weights_with_interaction = []
+
+        for t in detect_loc:
+            z_det, y_offset = t
+
+            t_vals = (z_det - self.pos["z"]) / p_dir["z"]
+            x_hit = self.pos["x"] + t_vals * p_dir["x"]
+            y_hit = self.pos["y"] + t_vals * p_dir["y"]
+
+            r2 = x_hit**2 + (y_hit + y_offset) ** 2
+            in_acceptance = (t_vals > 0) & (r2 < det_radius**2)
+
+            if not np.any(in_acceptance):
+                continue
+
+            sigma = self.pnu["E"][in_acceptance] * 1e-38
+            # use same linearized P_int approximation as in get_event_map_fixed_z
+            P_int = (1 / 1.67262192e-24) * sigma * 10e2
+
+            weights_int = self.weights[in_acceptance, 0] * P_int
+            nu_energies.extend(self.pnu["E"][in_acceptance])
+            weights_with_interaction.extend(weights_int)
+
+        if len(nu_energies) == 0:
+            # No events in acceptance, return empty bins
+            if e_bins is None:
+                if log_e:
+                    e_bins = np.logspace(
+                        -2, 2, nbins + 1
+                    )  # Default energy range 0.01-10 GeV
+                else:
+                    e_bins = np.linspace(
+                        0, 5, nbins + 1
+                    )  # Default energy range 0-5 GeV
+            counts = np.zeros(len(e_bins) - 1)
+            centers = 0.5 * (e_bins[:-1] + e_bins[1:])
+            return centers, counts
+
+        nu_energies = np.asarray(nu_energies)
+        weights_with_interaction = np.asarray(weights_with_interaction)
+
+        if e_bins is None:
+            emin, emax = nu_energies.min(), nu_energies.max()
+            e_bins = np.logspace(np.log10(emin), np.log10(emax), nbins + 1)
+
+        counts, edges = np.histogram(
+            nu_energies, bins=e_bins, weights=weights_with_interaction
+        )
+        centers = 0.5 * (edges[:-1] + edges[1:])
+
+        counts *= 5 * np.pi * 1e7  # 5 Hz injection rate * seconds in a year
+
+        dE = np.diff(edges)
+
+        counts /= dE
+
+        return centers, counts
+
+    def get_event_counts_vs_energy_srange(
+        self,
+        s_range,
+        nbins=50,
+        e_bins=None,
+        log_e=True,
+    ):
+        """
+        Compute dN/dE from neutrinos whose muons decayed in a given s_muon region.
+
+        Args:
+            s_range: (s_min, s_max) defining accepted muon decay positions along lattice [cm]
+            nbins:   number of energy bins if e_bins is None
+            e_bins:  optional bin edges [GeV]
+            log_e:   whether to use log-spaced bins
+
+        Returns:
+            (E_centers, dN/dE)
+        """
+
+        s_min, s_max = s_range
+
+        # ---- Acceptance mask determined ONLY by muon decay position ----
+        in_acceptance = (self.s_muon >= s_min) & (self.s_muon < s_max)
+
+        if not np.any(in_acceptance):
+            # No events → return empty spectrum
+            if e_bins is None:
+                if log_e:
+                    e_bins = np.logspace(-2, 2, nbins + 1)
+                else:
+                    e_bins = np.linspace(0, 5, nbins + 1)
+
+            centers = 0.5 * (e_bins[:-1] + e_bins[1:])
+            counts = np.zeros_like(centers)
+            return centers, counts
+
+        # ---- Extract energies and interaction probabilities ----
+        nu_E = self.pnu["E"][in_acceptance]  # neutrino energy
+        sigma = nu_E * 1e-38  # cm²
+        n_target = 1 / 1.67262192e-24  # nucleons/cm³
+        P_int = n_target * sigma * 10e2  # linearized
+
+        decay_w = self.weights[in_acceptance, 0]  # decay weights
+        weights_int = decay_w * P_int  # weighted contribution
+
+        # ---- Convert to numpy ----
+        nu_E = np.asarray(nu_E)
+        weights_int = np.asarray(weights_int)
+
+        # ---- Energy binning ----
+        if e_bins is None:
+            emin, emax = nu_E.min(), nu_E.max()
+            if log_e:
+                e_bins = np.logspace(np.log10(emin), np.log10(emax), nbins + 1)
+            else:
+                e_bins = np.linspace(emin, emax, nbins + 1)
+
+        counts, edges = np.histogram(nu_E, bins=e_bins, weights=weights_int)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+
+        # ---- Convert to per-year ----
+        counts *= 5 * np.pi * 1e7
+
+        # ---- Convert to dN/dE ----
+        dE = np.diff(edges)
+        counts /= dE
+
+        return centers, counts
+
+    def plot_event_counts_vs_energy(
+        self,
+        detect_loc=None,
+        detect=True,
+        nbins=50,
+        e_bins=None,
+        log_e=True,
+        det_radius=1e2,
+        figsize=(6, 4),
+        fig_and_ax=None,
+        xlabel=None,
+        ylabel=None,
+        color="blue",
+        label=None,
+        s_range=None,
+    ):
+        """Plot predicted neutrino interaction counts vs neutrino energy.
+
+        Returns (fig, ax).
+        """
+        import matplotlib.pyplot as plt
+        from scipy.interpolate import UnivariateSpline as uspline
+
+        if detect:
+            centers, counts = self.get_event_counts_vs_energy(
+                detect_loc=detect_loc,
+                nbins=nbins,
+                e_bins=e_bins,
+                log_e=log_e,
+                det_radius=det_radius,
+            )
+        else:
+            centers, counts = self.get_event_counts_vs_energy_srange(
+                s_range=s_range, nbins=nbins, e_bins=e_bins, log_e=log_e
+            )
+
+        if fig_and_ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+        else:
+            fig, ax = fig_and_ax
+
+        # Ensure arrays
+        centers = np.asarray(centers)
+        counts = np.asarray(counts)
+
+        # Filter out non-positive values since log scale cannot display them
+        mask = (centers > 0) & (counts > 0)
+        if np.any(mask):
+            # plot only positive bins on log-log axes
+            (line,) = ax.step(centers[mask], counts[mask], where="mid")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+        else:
+            # fallback to linear plot if no positive bins
+            (line,) = ax.step(centers, counts, where="mid")
+            import warnings
+
+            warnings.warn(
+                "No positive (center,count) pairs found for log-log plot; using linear scales instead."
+            )
+
+        line.set_color(color)
+        if label:
+            line.set_label(label)
+
+        ax.set_xlabel(xlabel or "Neutrino Energy (GeV)")
+        ax.set_ylabel(ylabel or "Predicted neutrino events")
+        ax.grid(True, which="both", ls="--", alpha=0.5)
+
+        return fig, ax, label
 
 
 # class BINSimulator:
